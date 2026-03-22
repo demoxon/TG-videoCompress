@@ -1,19 +1,12 @@
 #    This file is part of the CompressorQueue distribution.
 #    Copyright (c) 2021 Danish_00
 #    Script Improved by Anshusharma
-#    Updated by Grok (webhook-compatible deployment)
 
 from . import *
 from .config import *
 from .worker import *
 from .devtools import *
 from .FastTelethon import *
-
-import os
-from aiohttp import web
-
-PORT = int(os.getenv("PORT", "8080"))
-
 LOGS.info("Starting...")
 
 try:
@@ -21,85 +14,100 @@ try:
 except Exception as er:
     LOGS.info(er)
 
+
 ####### GENERAL CMDS ########
 
 @bot.on(events.NewMessage(pattern="/start"))
 async def _(e):
-    if str(e.sender_id) not in OWNER and e.sender_id != DEV:
+    if str(e.sender_id) not in OWNER and e.sender_id !=DEV:
         return e.reply("**Sorry You're not An Authorised User!**")
     await start(e)
 
+
 @bot.on(events.NewMessage(pattern="/setcode"))
 async def _(e):
-    if str(e.sender_id) not in OWNER and e.sender_id != DEV:
+    if str(e.sender_id) not in OWNER and e.sender_id !=DEV:
         return e.reply("**Sorry You're not An Authorised User!**")
     await coding(e)
 
+
 @bot.on(events.NewMessage(pattern="/getcode"))
 async def _(e):
-    if str(e.sender_id) not in OWNER and e.sender_id != DEV:
+    if str(e.sender_id) not in OWNER and e.sender_id !=DEV:
         return e.reply("**Sorry You're not An Authorised User!**")
     await getcode(e)
 
+
 @bot.on(events.NewMessage(pattern="/showthumb"))
 async def _(e):
-    if str(e.sender_id) not in OWNER and e.sender_id != DEV:
+    if str(e.sender_id) not in OWNER and e.sender_id !=DEV:
         return e.reply("**Sorry You're not An Authorised User!**")
     await getthumb(e)
 
+
 @bot.on(events.NewMessage(pattern="/logs"))
 async def _(e):
-    if str(e.sender_id) not in OWNER and e.sender_id != DEV:
+    if str(e.sender_id) not in OWNER and e.sender_id !=DEV:
         return e.reply("**Sorry You're not An Authorised User!**")
     await getlogs(e)
 
+
 @bot.on(events.NewMessage(pattern="/cmds"))
 async def _(e):
-    if str(e.sender_id) not in OWNER and e.sender_id != DEV:
+    if str(e.sender_id) not in OWNER and e.sender_id !=DEV:
         return e.reply("**Sorry You're not An Authorised User!**")
     await zylern(e)
 
+
 @bot.on(events.NewMessage(pattern="/ping"))
 async def _(e):
-    if str(e.sender_id) not in OWNER and e.sender_id != DEV:
+    if str(e.sender_id) not in OWNER and e.sender_id !=DEV:
         return e.reply("**Sorry You're not An Authorised User!**")
     await up(e)
 
+
 @bot.on(events.NewMessage(pattern="/sysinfo"))
 async def _(e):
-    if str(e.sender_id) not in OWNER and e.sender_id != DEV:
+    if str(e.sender_id) not in OWNER and e.sender_id !=DEV:
         return e.reply("**Sorry You're not An Authorised User!**")
     await sysinfo(e)
 
+
 @bot.on(events.NewMessage(pattern="/leech"))
 async def _(e):
-    if str(e.sender_id) not in OWNER and e.sender_id != DEV:
+    if str(e.sender_id) not in OWNER and e.sender_id !=DEV:
         return e.reply("**Sorry You're not An Authorised User!**")
     await dl_link(e)
 
+
 @bot.on(events.NewMessage(pattern="/help"))
 async def _(e):
-    if str(e.sender_id) not in OWNER and e.sender_id != DEV:
+    if str(e.sender_id) not in OWNER and e.sender_id !=DEV:
         return e.reply("**Sorry You're not An Authorised User!**")
     await ihelp(e)
 
+
 @bot.on(events.NewMessage(pattern="/renew"))
 async def _(e):
-    if str(e.sender_id) not in OWNER and e.sender_id != DEV:
+    if str(e.sender_id) not in OWNER and e.sender_id !=DEV:
         return e.reply("**Sorry You're not An Authorised User!**")
     await renew(e)
 
+
 @bot.on(events.NewMessage(pattern="/clear"))
 async def _(e):
-    if str(e.sender_id) not in OWNER and e.sender_id != DEV:
+    if str(e.sender_id) not in OWNER and e.sender_id !=DEV:
         return e.reply("**Sorry You're not An Authorised User!**")
     await clearqueue(e)
 
+
 @bot.on(events.NewMessage(pattern="/speed"))
 async def _(e):
-    if str(e.sender_id) not in OWNER and e.sender_id != DEV:
+    if str(e.sender_id) not in OWNER and e.sender_id !=DEV:
         return e.reply("**Sorry You're not An Authorised User!**")
     await test(e)
+    
+    
 
 ########## Direct ###########
 
@@ -110,6 +118,7 @@ async def _(e):
 @bot.on(events.NewMessage(pattern="/bash"))
 async def _(e):
     await bash(e)
+
 
 ######## Callbacks #########
 
@@ -129,17 +138,19 @@ async def _(e):
 
 @bot.on(events.NewMessage(incoming=True))
 async def _(event):
-    if str(event.sender_id) not in OWNER and event.sender_id != DEV:
-        return await event.reply_text("**Sorry You're not An Authorised User!**")
-    if not event.photo:
-        return
-    os.system("rm thumb.jpg")
-    await event.client.download_media(event.media, file="/bot/thumb.jpg")
-    await event.reply("**Thumbnail Saved Successfully.**")
+        if str(event.sender_id) not in OWNER and event.sender_id !=DEV:
+            return await event.reply_text("**Sorry You're not An Authorised User!**")
+        if not event.photo:
+            return
+        os.system("rm thumb.jpg")
+        await event.client.download_media(event.media, file="/bot/thumb.jpg")
+        await event.reply("**Thumbnail Saved Successfully.**")
+
 
 @bot.on(events.NewMessage(incoming=True))
 async def _(e):
     await encod(e)
+
 
 async def something():
     for i in itertools.count():
@@ -188,7 +199,7 @@ async def something():
                 hehe = f"{out};{dl};{list(QUEUE.keys())[0]}"
                 wah = code(hehe)
                 nn = await e.edit(
-                    "**Compressing...**",
+                    "**🗜 Compressing...**",
                     buttons=[
                         [Button.inline("STATS", data=f"stats{wah}")],
                         [Button.inline("CANCEL", data=f"skip{wah}")],
@@ -249,19 +260,7 @@ async def something():
 ########### Start ############
 
 LOGS.info("Bot has started.")
-
-async def main():
-    # ── Web server for hosting platforms (makes it webhook-compatible) ──
-    app = web.Application()
-    app.router.add_get("/", lambda request: web.Response(text="✅ TG-videoCompress Bot is running!"))
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", PORT)
-    await site.start()
-    LOGS.info(f"🌐 Web server started on port {PORT} (required by Railway/Render/Fly.io etc.)")
-
-    # Original queue processing (unchanged)
-    await something()
-
 with bot:
-    bot.loop.run_until_complete(main())
+    bot.loop.run_until_complete(something())
+    bot.loop.run_forever()
+ 
