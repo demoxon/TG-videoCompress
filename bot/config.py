@@ -1,7 +1,6 @@
 import logging
 from decouple import config
 
-# Logging
 logging.basicConfig(level=logging.INFO)
 LOGS = logging.getLogger(__name__)
 
@@ -10,11 +9,10 @@ try:
     API_HASH = config("API_HASH")
     BOT_TOKEN = config("BOT_TOKEN")
 
-    # ✅ FIXED TYPES
     DEV = int(config("DEV", default=0))
     OWNER = list(map(int, config("OWNER", default="").split()))
 
-    # 🚀 FAST + BALANCED FFmpeg
+    # ⚡ Fast compression
     ffmpegcode = [
         "-c:v libx264 -preset ultrafast -crf 28 "
         "-vf scale=1280:-2 "
@@ -22,12 +20,10 @@ try:
         "-threads 0"
     ]
 
-    # Optional thumbnail
     THUMB = config("THUMBNAIL", default=None)
 
-    LOGS.info("✅ Config loaded")
+    LOGS.info("✅ Config Loaded")
 
 except Exception as e:
-    LOGS.error("❌ Config error")
     LOGS.error(str(e))
     raise e
