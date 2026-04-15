@@ -1,10 +1,23 @@
-from . import *
 from .config import *
 from .FastTelethon import *
 
-import os, asyncio, time, itertools
-from datetime import datetime as dt
+import os
+import asyncio
+import time
 from pathlib import Path
+from telethon import TelegramClient, events
+
+# 🔥 GLOBALS
+QUEUE = {}
+WORKING = False
+
+# 🚀 START BOT
+bot = TelegramClient("bot", APP_ID, API_HASH).start(bot_token=BOT_TOKEN)
+LOGS.info("🚀 Bot Started")
+
+# 🔐 AUTH
+def auth(uid):
+    return uid in OWNER or uid == DEV
 
 # 🔥 RENDER PORT FIX
 import threading
@@ -17,60 +30,56 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(b"Bot running")
 
 def run_server():
-    import os
     port = int(os.environ.get("PORT", 8000))
     server = HTTPServer(("0.0.0.0", port), Handler)
     server.serve_forever()
 
 threading.Thread(target=run_server, daemon=True).start()
 
-# START BOT
-bot.start(bot_token=BOT_TOKEN)
-LOGS.info("🚀 Bot Started")
-
-# AUTH
-def auth(uid):
-    return uid in OWNER or uid == DEV
-
-# COMMAND
+# ✅ START COMMAND
 @bot.on(events.NewMessage(pattern="/start"))
-async def _(e):
+async def start_cmd(e):
     if not auth(e.sender_id):
         return await e.reply("❌ Not allowed")
-    await e.reply("✅ Bot is running")
+    await e.reply("✅ Send a video to compress")
 
-# AUTO ENCODE
+# 📥 ADD TO QUEUE
 @bot.on(events.NewMessage(incoming=True))
-async def _(e):
+async def add_queue(e):
     if not auth(e.sender_id):
         return
-    await encod(e)
 
-# MAIN LOOP
+    if e.video or e.document:
+        QUEUE[e.id] = e.media
+        await e.reply("📥 Added to queue")
+
+# 🚀 WORKER
 async def worker():
+    global WORKING
+
     while True:
         try:
-            if QUEUE:
-
-                user = OWNER[0]
-                e = await bot.send_message(user, "📥 Downloading...")
+            if not WORKING and QUEUE:
+                WORKING = True
 
                 file_id, file = list(QUEUE.items())[0]
+                user = OWNER[0]
 
-                # 🚀 FAST DOWNLOAD
-                tt = time.time()
+                msg = await bot.send_message(user, "📥 Downloading...")
+
+                # ⚡ FAST DOWNLOAD
+                start = time.time()
                 dl = await fast_download(
-                    e,
+                    msg,
                     file_id,
                     file,
                     progress_callback=lambda d, t: asyncio.create_task(
-                        progress(d, t, e, tt, "📥 Downloading...")
+                        progress(d, t, msg, start, "📥 Downloading")
                     )
                 )
 
                 dl = "downloads/" + dl
 
-                # FILE SIZE
                 size = Path(dl).stat().st_size / (1024 * 1024)
 
                 # 🎯 SMART COMPRESSION
@@ -81,35 +90,25 @@ async def worker():
 
                 out = f"encode/{Path(dl).stem}.mkv"
 
-                await e.edit("🗜 Compressing...")
+                await msg.edit("🗜 Compressing...")
 
                 cmd = f'ffmpeg -i "{dl}" {code} "{out}" -y'
 
-                process = await asyncio.create_subprocess_shell(
-                    cmd,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE
-                )
-
-                while True:
-                    await asyncio.sleep(5)
-                    if process.returncode is not None:
-                        break
-                    await e.edit("🗜 Compressing... ⏳")
-
-                stdout, stderr = await process.communicate()
+                process = await asyncio.create_subprocess_shell(cmd)
+                await process.communicate()
 
                 if process.returncode != 0:
-                    await e.edit(f"❌ Error:\n{stderr.decode()}")
+                    await msg.edit("❌ Compression failed")
                     QUEUE.pop(file_id)
+                    WORKING = False
                     continue
 
-                # SIZE STATS
+                # 📊 STATS
                 org = Path(dl).stat().st_size
                 com = Path(out).stat().st_size
                 per = 100 - ((com / org) * 100)
 
-                await e.edit(
+                await msg.edit(
                     f"📊 Done\n\n"
                     f"Original: {round(org/1024/1024,2)} MB\n"
                     f"Compressed: {round(com/1024/1024,2)} MB\n"
@@ -117,8 +116,7 @@ async def worker():
                 )
 
                 # 🚀 FAST UPLOAD
-                ttt = time.time()
-                await bot.send_message(user, "📤 Uploading...")
+                upmsg = await bot.send_message(user, "📤 Uploading...")
 
                 with open(out, "rb") as f:
                     await upload_file(
@@ -126,22 +124,29 @@ async def worker():
                         file=f,
                         name=out,
                         progress_callback=lambda d, t: asyncio.create_task(
-                            progress(d, t, e, ttt, "📤 Uploading...")
+                            progress(d, t, upmsg, time.time(), "📤 Uploading")
                         ),
                     )
 
-                # CLEAN
+                await upmsg.delete()
+
+                # 🧹 CLEANUP
                 QUEUE.pop(file_id)
-                os.remove(dl)
-                os.remove(out)
+                WORKING = False
+
+                if os.path.exists(dl):
+                    os.remove(dl)
+                if os.path.exists(out):
+                    os.remove(out)
 
             else:
                 await asyncio.sleep(3)
 
-        except Exception as err:
-            LOGS.error(err)
+        except Exception as e:
+            LOGS.error(e)
+            WORKING = False
 
-# RUN
+# 🚀 RUN
 with bot:
     bot.loop.run_until_complete(worker())
     bot.loop.run_forever()
