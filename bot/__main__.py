@@ -36,6 +36,34 @@ def run_server():
 
 threading.Thread(target=run_server, daemon=True).start()
 
+# ✅ PROGRESS FUNCTION (NO SPAM)
+async def progress(current, total, message, start, text):
+    now = time.time()
+    diff = now - start
+
+    if round(diff % 5) != 0:
+        return
+
+    percentage = current * 100 / total if total else 0
+    speed = current / diff if diff > 0 else 0
+    remaining = round((total - current) / speed) if speed > 0 else 0
+
+    bar_length = 10
+    filled = int(bar_length * current // total) if total else 0
+    bar = "█" * filled + "░" * (bar_length - filled)
+
+    msg = (
+        f"{text}\n\n"
+        f"{bar} {round(percentage,2)}%\n\n"
+        f"⚡ Speed: {round(speed/1024,2)} KB/s\n"
+        f"⏱ ETA: {remaining}s"
+    )
+
+    try:
+        await message.edit(msg)
+    except:
+        pass
+
 # ✅ START COMMAND
 @bot.on(events.NewMessage(pattern="/start"))
 async def start_cmd(e):
@@ -65,16 +93,16 @@ async def worker():
                 file_id, file = list(QUEUE.items())[0]
                 user = OWNER[0]
 
-                msg = await bot.send_message(user, "📥 Downloading...")
+                msg = await bot.send_message(user, "📥 Starting download...")
 
-                # ⚡ FAST DOWNLOAD
+                # 🚀 FAST DOWNLOAD
                 start = time.time()
                 dl = await fast_download(
                     msg,
                     file_id,
                     file,
                     progress_callback=lambda d, t: asyncio.create_task(
-                        progress(d, t, msg, start, "📥 Downloading")
+                        progress(d, t, msg, start, "📥 Downloading...")
                     )
                 )
 
@@ -124,7 +152,7 @@ async def worker():
                         file=f,
                         name=out,
                         progress_callback=lambda d, t: asyncio.create_task(
-                            progress(d, t, upmsg, time.time(), "📤 Uploading")
+                            progress(d, t, upmsg, time.time(), "📤 Uploading...")
                         ),
                     )
 
