@@ -1,14 +1,14 @@
 from .config import *
 
-import os
-import asyncio
-import time
+import os, asyncio, time
 from pathlib import Path
-from telethon import TelegramClient, events
+from telethon import TelegramClient, events, Button
+from telethon.errors import FloodWaitError
 
 # 🔥 GLOBALS
 QUEUE = {}
 WORKING = False
+CANCEL = False
 
 # 🚀 START BOT
 bot = TelegramClient("bot", APP_ID, API_HASH).start(bot_token=BOT_TOKEN)
@@ -35,66 +35,95 @@ def run_server():
 
 threading.Thread(target=run_server, daemon=True).start()
 
-# ✅ PROGRESS FUNCTION (NO SPAM)
+# 📊 PROGRESS
 async def progress(current, total, message, start, text):
     now = time.time()
     diff = now - start
 
-    if round(diff % 5) != 0:
+    if int(diff) % 10 != 0:
         return
 
-    percentage = current * 100 / total if total else 0
-    speed = current / diff if diff > 0 else 0
-    remaining = round((total - current) / speed) if speed > 0 else 0
-
-    bar_length = 10
-    filled = int(bar_length * current // total) if total else 0
-    bar = "█" * filled + "░" * (bar_length - filled)
-
-    msg = (
-        f"{text}\n\n"
-        f"{bar} {round(percentage,2)}%\n\n"
-        f"⚡ Speed: {round(speed/1024,2)} KB/s\n"
-        f"⏱ ETA: {remaining}s"
-    )
+    percent = current * 100 / total if total else 0
+    bar = "█" * int(percent // 10) + "░" * (10 - int(percent // 10))
 
     try:
-        await message.edit(msg)
+        await message.edit(f"{text}\n\n{bar} {round(percent,2)}%")
+    except FloodWaitError as e:
+        await asyncio.sleep(e.seconds)
     except:
         pass
 
-# ✅ START COMMAND
+# ✅ START
 @bot.on(events.NewMessage(pattern="/start"))
-async def start_cmd(e):
+async def start(e):
     if not auth(e.sender_id):
         return await e.reply("❌ Not allowed")
-    await e.reply("✅ Send a video to compress")
+    await e.reply("✅ Send video to compress")
 
-# 📥 ADD TO QUEUE
+# ❌ CANCEL COMMAND
+@bot.on(events.NewMessage(pattern="/cancel"))
+async def cancel_cmd(e):
+    global CANCEL, QUEUE
+
+    if not auth(e.sender_id):
+        return
+
+    CANCEL = True
+    QUEUE.clear()
+    await e.reply("❌ Cancelled")
+
+# ❌ CANCEL BUTTON
+@bot.on(events.CallbackQuery(data=b"cancel"))
+async def cancel_btn(e):
+    global CANCEL, QUEUE
+
+    CANCEL = True
+    QUEUE.clear()
+    await e.answer("Cancelled", alert=True)
+
+# 📥 ADD TO QUEUE (ONLY LATEST)
 @bot.on(events.NewMessage(incoming=True))
 async def add_queue(e):
+    global QUEUE, CANCEL
+
     if not auth(e.sender_id):
         return
 
     if e.video or e.document:
+        QUEUE.clear()
+        CANCEL = True
+
         QUEUE[e.id] = e.media
-        await e.reply("📥 Added to queue")
+        await e.reply("📥 Added (old task removed)")
 
 # 🚀 WORKER
 async def worker():
-    global WORKING
+    global WORKING, CANCEL
 
     while True:
         try:
             if not WORKING and QUEUE:
                 WORKING = True
+                CANCEL = False
 
                 file_id, file = list(QUEUE.items())[0]
                 user = OWNER[0]
 
-                msg = await bot.send_message(user, "📥 Starting download...")
+                # 📁 Ensure folders exist
+                os.makedirs("downloads", exist_ok=True)
+                os.makedirs("encode", exist_ok=True)
 
-                # 📥 DOWNLOAD (STABLE)
+                # 📩 SINGLE MESSAGE
+                try:
+                    msg = await bot.send_message(
+                        user,
+                        "📥 Starting...",
+                        buttons=[[Button.inline("❌ Cancel", b"cancel")]]
+                    )
+                except FloodWaitError as e:
+                    await asyncio.sleep(e.seconds)
+
+                # 📥 DOWNLOAD
                 start = time.time()
                 dl = f"downloads/{file_id}.mp4"
 
@@ -106,26 +135,41 @@ async def worker():
                     )
                 )
 
-                size = Path(dl).stat().st_size / (1024 * 1024)
+                if CANCEL:
+                    await msg.edit("❌ Cancelled")
+                    WORKING = False
+                    continue
 
-                # 🎯 SMART COMPRESSION
-                if size > 300:
-                    code = "-c:v libx264 -preset ultrafast -crf 30 -vf scale=854:-2 -c:a aac -b:a 96k -threads 0"
-                else:
-                    code = ffmpegcode[0]
-
+                # 🎬 COMPRESS (SAFE)
                 out = f"encode/{file_id}.mkv"
 
                 await msg.edit("🗜 Compressing...")
 
-                cmd = f'ffmpeg -i "{dl}" {code} "{out}" -y'
+                cmd = f'ffmpeg -y -i "{dl}" -c:v libx264 -preset ultrafast -crf 28 -vf "scale=-2:720" -c:a aac -b:a 96k "{out}"'
 
-                process = await asyncio.create_subprocess_shell(cmd)
-                await process.communicate()
+                process = await asyncio.create_subprocess_shell(
+                    cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+
+                stdout, stderr = await process.communicate()
+
+                if CANCEL:
+                    process.kill()
+                    await msg.edit("❌ Cancelled")
+                    WORKING = False
+                    continue
 
                 if process.returncode != 0:
-                    await msg.edit("❌ Compression failed")
-                    QUEUE.pop(file_id)
+                    await msg.edit(f"❌ Compression failed\n\n{stderr.decode()[:300]}")
+                    WORKING = False
+                    QUEUE.clear()
+                    continue
+
+                # 🛑 Check file exists
+                if not os.path.exists(out):
+                    await msg.edit("❌ Output file not created")
                     WORKING = False
                     continue
 
@@ -141,12 +185,16 @@ async def worker():
                     f"Saved: {round(per,2)}%"
                 )
 
-                # 📤 UPLOAD (STABLE)
-                await bot.send_file(
-                    user,
-                    out,
-                    caption="✅ Compressed successfully"
-                )
+                if CANCEL:
+                    WORKING = False
+                    continue
+
+                # 📤 UPLOAD
+                try:
+                    await bot.send_file(user, out, caption="✅ Done")
+                except FloodWaitError as e:
+                    await asyncio.sleep(e.seconds)
+                    await bot.send_file(user, out, caption="✅ Done")
 
                 # 🧹 CLEANUP
                 QUEUE.pop(file_id)
@@ -159,6 +207,9 @@ async def worker():
 
             else:
                 await asyncio.sleep(3)
+
+        except FloodWaitError as e:
+            await asyncio.sleep(e.seconds)
 
         except Exception as e:
             LOGS.error(e)
