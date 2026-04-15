@@ -1,17 +1,12 @@
 from . import *
 from .config import *
-from .worker import *
-from .devtools import *
 from .FastTelethon import *
 
-import os
-import asyncio
-import time
-import itertools
+import os, asyncio, time, itertools
 from datetime import datetime as dt
 from pathlib import Path
 
-# 🔥 Render PORT FIX
+# 🔥 RENDER PORT FIX
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
@@ -19,206 +14,126 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Bot is running")
+        self.wfile.write(b"Bot running")
 
 def run_server():
+    import os
     port = int(os.environ.get("PORT", 8000))
     server = HTTPServer(("0.0.0.0", port), Handler)
     server.serve_forever()
 
 threading.Thread(target=run_server, daemon=True).start()
 
-LOGS.info("🚀 Starting Bot...")
+# START BOT
+bot.start(bot_token=BOT_TOKEN)
+LOGS.info("🚀 Bot Started")
 
-try:
-    bot.start(bot_token=BOT_TOKEN)
-except Exception as er:
-    LOGS.error(er)
+# AUTH
+def auth(uid):
+    return uid in OWNER or uid == DEV
 
-# ✅ AUTH CHECK FIX
-def is_authorized(user_id):
-    return user_id in OWNER or user_id == DEV
-
-
-######## COMMANDS ########
-
+# COMMAND
 @bot.on(events.NewMessage(pattern="/start"))
 async def _(e):
-    if not is_authorized(e.sender_id):
-        return await e.reply("❌ Not Authorized")
-    await start(e)
+    if not auth(e.sender_id):
+        return await e.reply("❌ Not allowed")
+    await e.reply("✅ Bot is running")
 
-@bot.on(events.NewMessage(pattern="/setcode"))
-async def _(e):
-    if not is_authorized(e.sender_id):
-        return await e.reply("❌ Not Authorized")
-    await coding(e)
-
-@bot.on(events.NewMessage(pattern="/getcode"))
-async def _(e):
-    if not is_authorized(e.sender_id):
-        return await e.reply("❌ Not Authorized")
-    await getcode(e)
-
-@bot.on(events.NewMessage(pattern="/showthumb"))
-async def _(e):
-    if not is_authorized(e.sender_id):
-        return await e.reply("❌ Not Authorized")
-    await getthumb(e)
-
-@bot.on(events.NewMessage(pattern="/logs"))
-async def _(e):
-    if not is_authorized(e.sender_id):
-        return await e.reply("❌ Not Authorized")
-    await getlogs(e)
-
-@bot.on(events.NewMessage(pattern="/cmds"))
-async def _(e):
-    if not is_authorized(e.sender_id):
-        return await e.reply("❌ Not Authorized")
-    await zylern(e)
-
-@bot.on(events.NewMessage(pattern="/ping"))
-async def _(e):
-    if not is_authorized(e.sender_id):
-        return await e.reply("❌ Not Authorized")
-    await up(e)
-
-@bot.on(events.NewMessage(pattern="/sysinfo"))
-async def _(e):
-    if not is_authorized(e.sender_id):
-        return await e.reply("❌ Not Authorized")
-    await sysinfo(e)
-
-@bot.on(events.NewMessage(pattern="/leech"))
-async def _(e):
-    if not is_authorized(e.sender_id):
-        return await e.reply("❌ Not Authorized")
-    await dl_link(e)
-
-@bot.on(events.NewMessage(pattern="/help"))
-async def _(e):
-    if not is_authorized(e.sender_id):
-        return await e.reply("❌ Not Authorized")
-    await ihelp(e)
-
-@bot.on(events.NewMessage(pattern="/renew"))
-async def _(e):
-    if not is_authorized(e.sender_id):
-        return await e.reply("❌ Not Authorized")
-    await renew(e)
-
-@bot.on(events.NewMessage(pattern="/clear"))
-async def _(e):
-    if not is_authorized(e.sender_id):
-        return await e.reply("❌ Not Authorized")
-    await clearqueue(e)
-
-@bot.on(events.NewMessage(pattern="/speed"))
-async def _(e):
-    if not is_authorized(e.sender_id):
-        return await e.reply("❌ Not Authorized")
-    await test(e)
-
-
-######## AUTO THUMB ########
-
-@bot.on(events.NewMessage(incoming=True))
-async def _(event):
-    if not is_authorized(event.sender_id):
-        return
-
-    if event.photo:
-        thumb_path = "thumb.jpg"
-        if os.path.exists(thumb_path):
-            os.remove(thumb_path)
-
-        await event.client.download_media(event.media, file=thumb_path)
-        await event.reply("✅ Thumbnail Saved")
-
-
-######## AUTO ENCODE ########
-
+# AUTO ENCODE
 @bot.on(events.NewMessage(incoming=True))
 async def _(e):
-    if not is_authorized(e.sender_id):
+    if not auth(e.sender_id):
         return
     await encod(e)
 
-
-######## MAIN WORKER ########
-
-async def something():
-    for i in itertools.count():
-
+# MAIN LOOP
+async def worker():
+    while True:
         try:
-            if i % 50 == 0:
-                LOGS.info("💡 Bot alive...")
-
-            if not WORKING and QUEUE:
+            if QUEUE:
 
                 user = OWNER[0]
                 e = await bot.send_message(user, "📥 Downloading...")
 
-                s = dt.now()
+                file_id, file = list(QUEUE.items())[0]
 
-                try:
-                    dl, file = QUEUE[list(QUEUE.keys())[0]]
-                    dl = "downloads/" + dl
+                # 🚀 FAST DOWNLOAD
+                tt = time.time()
+                dl = await fast_download(
+                    e,
+                    file_id,
+                    file,
+                    progress_callback=lambda d, t: asyncio.create_task(
+                        progress(d, t, e, tt, "📥 Downloading...")
+                    )
+                )
 
-                    with open(dl, "wb") as f:
-                        await download_file(client=bot, location=file, out=f)
+                dl = "downloads/" + dl
 
-                except Exception as r:
-                    LOGS.error(r)
-                    WORKING.clear()
-                    QUEUE.pop(list(QUEUE.keys())[0])
-                    continue
+                # FILE SIZE
+                size = Path(dl).stat().st_size / (1024 * 1024)
 
-                es = dt.now()
+                # 🎯 SMART COMPRESSION
+                if size > 300:
+                    code = "-c:v libx264 -preset ultrafast -crf 30 -vf scale=854:-2 -c:a aac -b:a 96k -threads 0"
+                else:
+                    code = ffmpegcode[0]
 
                 out = f"encode/{Path(dl).stem}.mkv"
 
-                thum = "thumb.jpg" if os.path.exists("thumb.jpg") else None
-
                 await e.edit("🗜 Compressing...")
 
-                cmd = f'ffmpeg -i "{dl}" {ffmpegcode[0]} "{out}" -y'
+                cmd = f'ffmpeg -i "{dl}" {code} "{out}" -y'
 
                 process = await asyncio.create_subprocess_shell(
-                    cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                    cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
                 )
+
+                while True:
+                    await asyncio.sleep(5)
+                    if process.returncode is not None:
+                        break
+                    await e.edit("🗜 Compressing... ⏳")
 
                 stdout, stderr = await process.communicate()
 
-                # ✅ FIXED ERROR CHECK
                 if process.returncode != 0:
-                    err = stderr.decode()
-                    await e.edit(f"❌ FFmpeg Error:\n{err}")
-                    QUEUE.pop(list(QUEUE.keys())[0])
+                    await e.edit(f"❌ Error:\n{stderr.decode()}")
+                    QUEUE.pop(file_id)
                     continue
 
-                await e.edit("📤 Uploading...")
+                # SIZE STATS
+                org = Path(dl).stat().st_size
+                com = Path(out).stat().st_size
+                per = 100 - ((com / org) * 100)
 
-                if not os.path.exists(out) or os.path.getsize(out) == 0:
-                    await e.edit("❌ Output file invalid")
-                    QUEUE.pop(list(QUEUE.keys())[0])
-                    continue
-
-                await e.client.send_file(
-                    e.chat_id,
-                    file=out,
-                    force_document=True,
-                    thumb=thum,
-                    caption="✅ Done"
+                await e.edit(
+                    f"📊 Done\n\n"
+                    f"Original: {round(org/1024/1024,2)} MB\n"
+                    f"Compressed: {round(com/1024/1024,2)} MB\n"
+                    f"Saved: {round(per,2)}%"
                 )
 
-                QUEUE.pop(list(QUEUE.keys())[0])
+                # 🚀 FAST UPLOAD
+                ttt = time.time()
+                await bot.send_message(user, "📤 Uploading...")
 
-                if os.path.exists(dl):
-                    os.remove(dl)
-                if os.path.exists(out):
-                    os.remove(out)
+                with open(out, "rb") as f:
+                    await upload_file(
+                        client=bot,
+                        file=f,
+                        name=out,
+                        progress_callback=lambda d, t: asyncio.create_task(
+                            progress(d, t, e, ttt, "📤 Uploading...")
+                        ),
+                    )
+
+                # CLEAN
+                QUEUE.pop(file_id)
+                os.remove(dl)
+                os.remove(out)
 
             else:
                 await asyncio.sleep(3)
@@ -226,11 +141,7 @@ async def something():
         except Exception as err:
             LOGS.error(err)
 
-
-######## START ########
-
-LOGS.info("✅ Bot started successfully")
-
+# RUN
 with bot:
-    bot.loop.run_until_complete(something())
+    bot.loop.run_until_complete(worker())
     bot.loop.run_forever()
