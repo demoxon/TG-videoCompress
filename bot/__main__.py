@@ -1,5 +1,4 @@
 from .config import *
-from .FastTelethon import *
 
 import os
 import asyncio
@@ -19,7 +18,7 @@ LOGS.info("🚀 Bot Started")
 def auth(uid):
     return uid in OWNER or uid == DEV
 
-# 🔥 RENDER PORT FIX
+# 🌐 RENDER PORT FIX
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
@@ -95,18 +94,17 @@ async def worker():
 
                 msg = await bot.send_message(user, "📥 Starting download...")
 
-                # 🚀 FAST DOWNLOAD
+                # 📥 DOWNLOAD (STABLE)
                 start = time.time()
-                dl = await fast_download(
-                    msg,
-                    file_id,
+                dl = f"downloads/{file_id}.mp4"
+
+                await bot.download_media(
                     file,
+                    file=dl,
                     progress_callback=lambda d, t: asyncio.create_task(
                         progress(d, t, msg, start, "📥 Downloading...")
                     )
                 )
-
-                dl = "downloads/" + dl
 
                 size = Path(dl).stat().st_size / (1024 * 1024)
 
@@ -116,7 +114,7 @@ async def worker():
                 else:
                     code = ffmpegcode[0]
 
-                out = f"encode/{Path(dl).stem}.mkv"
+                out = f"encode/{file_id}.mkv"
 
                 await msg.edit("🗜 Compressing...")
 
@@ -143,20 +141,12 @@ async def worker():
                     f"Saved: {round(per,2)}%"
                 )
 
-                # 🚀 FAST UPLOAD
-                upmsg = await bot.send_message(user, "📤 Uploading...")
-
-                with open(out, "rb") as f:
-                    await upload_file(
-                        client=bot,
-                        file=f,
-                        name=out,
-                        progress_callback=lambda d, t: asyncio.create_task(
-                            progress(d, t, upmsg, time.time(), "📤 Uploading...")
-                        ),
-                    )
-
-                await upmsg.delete()
+                # 📤 UPLOAD (STABLE)
+                await bot.send_file(
+                    user,
+                    out,
+                    caption="✅ Compressed successfully"
+                )
 
                 # 🧹 CLEANUP
                 QUEUE.pop(file_id)
