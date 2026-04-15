@@ -1,28 +1,29 @@
 import logging
 from decouple import config
 
-# Setup logging
+# 🔧 Setup logging
 logging.basicConfig(level=logging.INFO)
 LOGS = logging.getLogger(__name__)
 
 try:
+    # 🔐 Telegram credentials
     APP_ID = config("APP_ID", cast=int)
     API_HASH = config("API_HASH")
     BOT_TOKEN = config("BOT_TOKEN")
 
-    DEV = config("DEV", default="False")
-    OWNER = config("OWNER", default="Unknown")
+    # 👤 Developer & Owner (FIXED TYPES)
+    DEV = int(config("DEV", default=0))
+    OWNER = list(map(int, config("OWNER", default="").split()))
 
-    # FFmpeg settings
+    # 🎬 Optimized FFmpeg settings (FAST + GOOD QUALITY)
     ffmpegcode = [
-        "-preset faster -c:v libx265 -s 854x480 "
-        "-x265-params 'bframes=8:psy-rd=1:ref=3:aq-mode=3:aq-strength=0.8:deblock=1,1' "
-        "-metadata 'title=Encoded By Bot' "
-        "-pix_fmt yuv420p -crf 30 -c:a libopus -b:a 32k "
-        "-c:s copy -map 0 -ac 2 -ab 32k -vbr 2 -level 3.1 -threads 1"
+        "-c:v libx265 -preset medium -crf 30 "
+        "-vf scale=1280:-2 "
+        "-c:a aac -b:a 64k "
+        "-threads 0"
     ]
 
-    # Make thumbnail optional ✅
+    # 🖼 Thumbnail (optional)
     THUMB = config("THUMBNAIL", default=None)
 
     LOGS.info("✅ Environment variables loaded successfully")
@@ -30,4 +31,4 @@ try:
 except Exception as e:
     LOGS.error("❌ Environment variables missing or invalid")
     LOGS.error(str(e))
-    raise e  # Better than exit(1)
+    raise e
