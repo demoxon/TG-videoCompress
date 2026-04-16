@@ -3,23 +3,28 @@ from .config import *
 import os, asyncio, time
 from pathlib import Path
 from telethon import events, Button, TelegramClient
-from http.server import HTTPServer, BaseHTTPRequestHandler
-import threading
 
 # =========================
-# 🔥 STATE
+# 🔥 GLOBAL STATE
 # =========================
 USER_SETTINGS = {}
-QUEUE = {}          # per-user queue
+QUEUE = {}
 WORKING = False
-CANCEL = set()      # per-user cancel
+CANCEL = False
+LAST_EDIT = {}
 
 bot = TelegramClient("bot", APP_ID, API_HASH).start(bot_token=BOT_TOKEN)
-LOGS.info("🎬 Video Editor Bot Started")
+LOGS.info("🎬 PRO UI Video Editor Bot Started")
+
+def auth(uid):
+    return uid in OWNER or uid == DEV
 
 # =========================
-# 🌐 KEEP ALIVE (RENDER)
+# 🌐 KEEP ALIVE (FIXED)
 # =========================
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
+
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -37,7 +42,7 @@ def run_server():
 threading.Thread(target=run_server, daemon=True).start()
 
 # =========================
-# ⚙ SETTINGS
+# ⚙ DEFAULT SETTINGS
 # =========================
 DEFAULT = {
     "resolution": 360,
@@ -45,35 +50,62 @@ DEFAULT = {
 }
 
 # =========================
-# 🔐 AUTH
+# 🎛 UI
 # =========================
-def auth(uid):
-    return uid == DEV or uid in OWNER
+def main_menu():
+    return [
+        [Button.inline("🎬 Compress", b"compress")],
+        [Button.inline("⚙ Settings", b"settings")],
+        [Button.inline("❌ Cancel", b"cancel")]
+    ]
+
+def settings_menu():
+    return [
+        [Button.inline("📐 Resolution", b"res")],
+        [Button.inline("🎛 Quality", b"preset")],
+        [Button.inline("🔙 Back", b"back")]
+    ]
+
+def preset_menu():
+    return [
+        [Button.inline("⚡ Fast", b"p_fast")],
+        [Button.inline("⚖ Balanced", b"p_bal")],
+        [Button.inline("🎥 High", b"p_high")],
+        [Button.inline("🔙 Back", b"settings")]
+    ]
+
+def res_menu():
+    return [
+        [Button.inline("240p", b"r240")],
+        [Button.inline("360p", b"r360")],
+        [Button.inline("720p", b"r720")],
+        [Button.inline("🔙 Back", b"settings")]
+    ]
+
+# =========================
+# 🧠 SAFE EDIT (ANTI FLOOD)
+# =========================
+async def safe_edit(msg, text, delay=2):
+    now = time.time()
+    key = msg.id
+
+    if key in LAST_EDIT and now - LAST_EDIT[key] < delay:
+        return
+
+    try:
+        await msg.edit(text[:4000])
+        LAST_EDIT[key] = now
+    except:
+        pass
 
 # =========================
 # 📊 PROGRESS BAR
 # =========================
 def bar(p):
-    p = int(p)
-    return "█" * (p // 10) + "░" * (10 - p // 10)
+    return "█" * int(p//10) + "░" * (10 - int(p//10))
 
 # =========================
-# 🧠 SAFE EDIT (ANTI FLOOD)
-# =========================
-last_edit = {}
-
-async def safe_edit(msg, text, uid):
-    now = time.time()
-    if uid in last_edit and now - last_edit[uid] < 3:
-        return
-    last_edit[uid] = now
-    try:
-        await msg.edit(text)
-    except:
-        pass
-
-# =========================
-# 🎛 START
+# 🚀 START
 # =========================
 @bot.on(events.NewMessage(pattern="/start"))
 async def start(e):
@@ -81,122 +113,143 @@ async def start(e):
         return await e.reply("❌ Not allowed")
 
     USER_SETTINGS[e.sender_id] = DEFAULT.copy()
-
-    await e.reply(
-        "🎬 Video Editor Bot Ready",
-        buttons=[
-            [Button.inline("🎬 Compress", b"compress")],
-            [Button.inline("❌ Cancel", b"cancel")]
-        ]
-    )
+    await e.reply("🎬 PRO Video Editor Bot", buttons=main_menu())
 
 # =========================
 # 🎛 CALLBACK
 # =========================
 @bot.on(events.CallbackQuery())
 async def callback(e):
+    global CANCEL
+
     uid = e.sender_id
     data = e.data.decode()
 
-    if uid not in USER_SETTINGS:
-        USER_SETTINGS[uid] = DEFAULT.copy()
+    USER_SETTINGS.setdefault(uid, DEFAULT.copy())
+
+    if data == "settings":
+        return await e.edit("⚙ Settings", buttons=settings_menu())
+
+    if data == "back":
+        return await e.edit("🎬 Menu", buttons=main_menu())
+
+    if data == "preset":
+        return await e.edit("🎛 Quality", buttons=preset_menu())
+
+    if data == "res":
+        return await e.edit("📐 Resolution", buttons=res_menu())
+
+    if data == "p_fast":
+        USER_SETTINGS[uid]["crf"] = 35
+        await e.answer("Fast ⚡")
+
+    if data == "p_bal":
+        USER_SETTINGS[uid]["crf"] = 30
+        await e.answer("Balanced ⚖")
+
+    if data == "p_high":
+        USER_SETTINGS[uid]["crf"] = 26
+        await e.answer("High 🎥")
+
+    if data == "r240":
+        USER_SETTINGS[uid]["resolution"] = 240
+        await e.answer("240p")
+
+    if data == "r360":
+        USER_SETTINGS[uid]["resolution"] = 360
+        await e.answer("360p")
+
+    if data == "r720":
+        USER_SETTINGS[uid]["resolution"] = 720
+        await e.answer("720p")
 
     if data == "cancel":
-        CANCEL.add(uid)
-        QUEUE.pop(uid, None)
-        await e.answer("Cancelled", alert=True)
-
-    if data == "compress":
-        await e.edit("📥 Send a video")
+        CANCEL = True
+        QUEUE.clear()
+        await e.answer("Cancelled ❌", alert=True)
 
 # =========================
 # 📥 VIDEO HANDLER
 # =========================
 @bot.on(events.NewMessage(incoming=True))
 async def video_handler(e):
+    global QUEUE, CANCEL
+
     if not auth(e.sender_id):
         return
 
     if e.video or e.document:
-        uid = e.sender_id
-
-        # replace previous job
-        QUEUE[uid] = {
-            "media": e.media,
-            "id": e.id
-        }
-
-        await e.reply("📥 Added to queue (latest only)")
+        QUEUE.clear()
+        CANCEL = False
+        QUEUE[e.id] = e.media
+        await e.reply("📥 Added to queue")
 
 # =========================
 # 🧠 WORKER
 # =========================
 async def worker():
-    global WORKING
+    global WORKING, CANCEL
 
     while True:
         try:
             if QUEUE and not WORKING:
                 WORKING = True
+                CANCEL = False
 
-                uid, job = list(QUEUE.items())[0]
-                file = job["media"]
-
-                settings = USER_SETTINGS.get(uid, DEFAULT)
-
-                dl = f"downloads/{uid}.mp4"
-                out = f"encode/{uid}.mp4"
+                file_id, file = list(QUEUE.items())[0]
+                user = OWNER[0]
+                settings = USER_SETTINGS.get(user, DEFAULT)
 
                 os.makedirs("downloads", exist_ok=True)
                 os.makedirs("encode", exist_ok=True)
 
-                msg = await bot.send_message(uid, "📥 Downloading...")
+                msg = await bot.send_message(user, "🚀 Starting...")
 
                 # ================= DOWNLOAD =================
+                dl = f"downloads/{file_id}.mp4"
                 start = time.time()
 
-                def progress(cur, total):
-                    if uid in CANCEL:
-                        return
-
+                def dl_progress(cur, total):
                     percent = cur * 100 / total if total else 0
                     speed = cur / (time.time() - start + 0.1)
                     eta = (total - cur) / (speed + 0.1)
 
                     asyncio.create_task(
-                        safe_edit(
-                            msg,
-                            f"📥 Downloading...\n"
+                        safe_edit(msg,
+                            f"📥 Downloading\n\n"
                             f"{bar(percent)} {percent:.1f}%\n"
                             f"⚡ {speed/1024:.1f} KB/s\n"
-                            f"⏱ ETA {int(eta)}s",
-                            uid
+                            f"⏱ ETA {int(eta)}s"
                         )
                     )
 
-                await bot.download_media(file, file=dl, progress_callback=progress)
+                await bot.download_media(file, file=dl, progress_callback=dl_progress)
 
-                if uid in CANCEL:
-                    CANCEL.remove(uid)
+                if CANCEL:
                     WORKING = False
                     continue
 
-                # ================= FFMPEG =================
+                # ================= COMPRESS =================
                 res = settings["resolution"]
                 crf = settings["crf"]
+                out = f"encode/{file_id}.mkv"
+
+                await safe_edit(msg, "🗜 Compressing...")
 
                 cmd = [
-                    "ffmpeg", "-y",
+                    "ffmpeg",
+                    "-y",
+                    "-hwaccel", "auto",
                     "-i", dl,
                     "-vf", f"scale=-2:{res}",
                     "-c:v", "libx264",
-                    "-preset", "veryfast",
-                    "-tune", "fastdecode",
+                    "-preset", "ultrafast",
                     "-crf", str(crf),
-                    "-pix_fmt", "yuv420p",
+                    "-threads", "0",
                     "-c:a", "aac",
                     "-b:a", "64k",
-                    "-movflags", "+faststart",
+                    "-progress", "pipe:1",
+                    "-nostats",
                     out
                 ]
 
@@ -207,68 +260,62 @@ async def worker():
                 )
 
                 start_enc = time.time()
+                last_update = 0
 
                 while True:
                     line = await process.stdout.readline()
                     if not line:
                         break
 
-                    line = line.decode(errors="ignore")
+                    if b"out_time_ms=" in line:
+                        now = time.time()
+                        if now - last_update < 2:
+                            continue
+                        last_update = now
 
-                    if "out_time_ms=" in line:
-                        try:
-                            t = int(line.split("=")[1]) / 1_000_000
-                            speed = t / (time.time() - start_enc + 0.1)
+                        t = int(line.decode().split("=")[1]) / 1000000
+                        speed = t / (time.time() - start_enc + 0.1)
 
-                            await safe_edit(
-                                msg,
-                                f"🗜 Compressing...\n"
-                                f"⏱ {t:.1f}s processed\n"
-                                f"⚡ {speed:.2f}x speed",
-                                uid
-                            )
-                        except:
-                            pass
+                        await safe_edit(msg,
+                            f"🗜 Compressing\n\n"
+                            f"⏱ {t:.1f}s processed\n"
+                            f"⚡ {speed:.2f}x speed"
+                        )
 
                 if not os.path.exists(out):
-                    await msg.edit("❌ Compression failed")
+                    await safe_edit(msg, "❌ Failed")
                     WORKING = False
                     continue
 
                 # ================= UPLOAD =================
+                org = Path(dl).stat().st_size
+                com = Path(out).stat().st_size
+
                 up_start = time.time()
 
                 def up_progress(cur, total):
-                    if uid in CANCEL:
-                        return
-
                     percent = cur * 100 / total if total else 0
                     speed = cur / (time.time() - up_start + 0.1)
                     eta = (total - cur) / (speed + 0.1)
 
                     asyncio.create_task(
-                        safe_edit(
-                            msg,
-                            f"📤 Uploading...\n"
+                        safe_edit(msg,
+                            f"📤 Uploading\n\n"
                             f"{bar(percent)} {percent:.1f}%\n"
                             f"⚡ {speed/1024:.1f} KB/s\n"
-                            f"⏱ ETA {int(eta)}s",
-                            uid
+                            f"⏱ ETA {int(eta)}s"
                         )
                     )
 
-                org = Path(dl).stat().st_size
-                com = Path(out).stat().st_size
-
                 await bot.send_file(
-                    uid,
+                    user,
                     out,
                     caption=f"🎬 Done\n📦 {org/1024/1024:.2f} → {com/1024/1024:.2f} MB",
                     progress_callback=up_progress
                 )
 
                 # ================= CLEAN =================
-                QUEUE.pop(uid, None)
+                QUEUE.pop(file_id)
                 WORKING = False
 
                 os.remove(dl)
