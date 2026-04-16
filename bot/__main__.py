@@ -3,27 +3,24 @@ from .config import *
 import os, asyncio, time
 from pathlib import Path
 from telethon import TelegramClient, events, Button
-from telethon.errors import FloodWaitError
 
-# ======================
+# =========================
 # 🔥 GLOBAL STATE
-# ======================
+# =========================
+USER_SETTINGS = {}
 QUEUE = {}
 WORKING = False
 CANCEL = False
 
-# ======================
-# 🚀 BOT START
-# ======================
 bot = TelegramClient("bot", APP_ID, API_HASH).start(bot_token=BOT_TOKEN)
-LOGS.info("🚀 Intelligent Compressor Bot Started")
+LOGS.info("🎬 UI Video Editor Bot Started")
 
 def auth(uid):
     return uid in OWNER or uid == DEV
 
-# ======================
+# =========================
 # 🌐 RENDER KEEP ALIVE
-# ======================
+# =========================
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
@@ -31,7 +28,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Bot Running")
+        self.wfile.write(b"UI Bot Running")
 
 def run_server():
     port = int(os.environ.get("PORT", 8000))
@@ -39,65 +36,134 @@ def run_server():
 
 threading.Thread(target=run_server, daemon=True).start()
 
-# ======================
-# 📊 PROGRESS HANDLER
-# ======================
-async def progress(current, total, message, start, text):
-    now = time.time()
-    diff = now - start
+# =========================
+# ⚙ DEFAULT SETTINGS
+# =========================
+DEFAULT = {
+    "preset": "balanced",
+    "resolution": 360,
+    "crf": 30,
+    "codec": "libx264"
+}
 
-    if int(diff) % 10 != 0:
-        return
+# =========================
+# 🎛 UI MENU
+# =========================
+def main_menu():
+    return [
+        [Button.inline("🎬 Compress Video", b"compress")],
+        [Button.inline("⚙ Settings", b"settings")],
+        [Button.inline("❌ Cancel Task", b"cancel")]
+    ]
 
-    percent = (current * 100 / total) if total else 0
-    bar = "█" * int(percent // 10) + "░" * (10 - int(percent // 10))
+def settings_menu():
+    return [
+        [Button.inline("🎛 Preset", b"preset")],
+        [Button.inline("📐 Resolution", b"res")],
+        [Button.inline("🔙 Back", b"back")]
+    ]
 
-    try:
-        await message.edit(f"{text}\n\n{bar} {round(percent,2)}%")
-    except FloodWaitError as e:
-        await asyncio.sleep(e.seconds)
-    except:
-        pass
+def preset_menu():
+    return [
+        [Button.inline("⚡ Fast (Low Size)", b"p_fast")],
+        [Button.inline("⚖ Balanced", b"p_bal")],
+        [Button.inline("🎥 Quality", b"p_qual")],
+        [Button.inline("🔙 Back", b"settings")]
+    ]
 
-# ======================
-# 🚀 START COMMAND
-# ======================
+def res_menu():
+    return [
+        [Button.inline("240p", b"r240")],
+        [Button.inline("360p", b"r360")],
+        [Button.inline("720p", b"r720")],
+        [Button.inline("🔙 Back", b"settings")]
+    ]
+
+# =========================
+# 🚀 START
+# =========================
 @bot.on(events.NewMessage(pattern="/start"))
 async def start(e):
     if not auth(e.sender_id):
         return await e.reply("❌ Not allowed")
-    await e.reply("📥 Send video → I will compress it smartly")
 
-# ======================
-# ❌ CANCEL COMMAND
-# ======================
-@bot.on(events.NewMessage(pattern="/cancel"))
-async def cancel(e):
-    global CANCEL, QUEUE
+    USER_SETTINGS[e.sender_id] = DEFAULT.copy()
 
-    if not auth(e.sender_id):
-        return
+    await e.reply(
+        "🎬 Welcome to Video Editor Bot",
+        buttons=main_menu()
+    )
 
-    CANCEL = True
-    QUEUE.clear()
-    await e.reply("❌ Cancelled all tasks")
+# =========================
+# 🎛 CALLBACK HANDLER
+# =========================
+@bot.on(events.CallbackQuery())
+async def callback(e):
+    global USER_SETTINGS, CANCEL
 
-# ======================
-# ❌ CANCEL BUTTON
-# ======================
-@bot.on(events.CallbackQuery(data=b"cancel"))
-async def cancel_btn(e):
-    global CANCEL, QUEUE
+    uid = e.sender_id
 
-    CANCEL = True
-    QUEUE.clear()
-    await e.answer("Cancelled", alert=True)
+    if uid not in USER_SETTINGS:
+        USER_SETTINGS[uid] = DEFAULT.copy()
 
-# ======================
-# 📥 QUEUE HANDLER (ONLY LAST VIDEO)
-# ======================
+    data = e.data.decode()
+
+    # ---------------- UI ----------------
+    if data == "compress":
+        await e.edit("📥 Send your video now")
+
+    elif data == "settings":
+        await e.edit("⚙ Settings Panel", buttons=settings_menu())
+
+    elif data == "preset":
+        await e.edit("🎛 Choose Preset", buttons=preset_menu())
+
+    elif data == "res":
+        await e.edit("📐 Select Resolution", buttons=res_menu())
+
+    elif data == "back":
+        await e.edit("🎬 Main Menu", buttons=main_menu())
+
+    # ---------------- PRESETS ----------------
+    elif data == "p_fast":
+        USER_SETTINGS[uid]["preset"] = "fast"
+        USER_SETTINGS[uid]["crf"] = 35
+        await e.answer("Fast mode ON")
+
+    elif data == "p_bal":
+        USER_SETTINGS[uid]["preset"] = "balanced"
+        USER_SETTINGS[uid]["crf"] = 30
+        await e.answer("Balanced mode ON")
+
+    elif data == "p_qual":
+        USER_SETTINGS[uid]["preset"] = "quality"
+        USER_SETTINGS[uid]["crf"] = 26
+        await e.answer("Quality mode ON")
+
+    # ---------------- RESOLUTION ----------------
+    elif data == "r240":
+        USER_SETTINGS[uid]["resolution"] = 240
+        await e.answer("240p selected")
+
+    elif data == "r360":
+        USER_SETTINGS[uid]["resolution"] = 360
+        await e.answer("360p selected")
+
+    elif data == "r720":
+        USER_SETTINGS[uid]["resolution"] = 720
+        await e.answer("720p selected")
+
+    # ---------------- CANCEL ----------------
+    elif data == "cancel":
+        CANCEL = True
+        QUEUE.clear()
+        await e.answer("Cancelled ❌", alert=True)
+
+# =========================
+# 📥 VIDEO HANDLER
+# =========================
 @bot.on(events.NewMessage(incoming=True))
-async def queue_handler(e):
+async def video_handler(e):
     global QUEUE, CANCEL
 
     if not auth(e.sender_id):
@@ -108,95 +174,61 @@ async def queue_handler(e):
         CANCEL = True
 
         QUEUE[e.id] = e.media
-        await e.reply("📥 New video added (old removed)")
+        await e.reply("📥 Video received. Processing soon...")
 
-# ======================
-# 🧠 INTELLIGENT ENGINE
-# ======================
-def smart_encoder(size_mb):
-    if size_mb <= 50:
-        return ("libx264", 23, "96k", "fast")
-    elif size_mb <= 300:
-        return ("libx265", 28, "64k", "medium")
-    else:
-        return ("libx265", 32, "48k", "slow")
-
-# ======================
-# 🚀 WORKER
-# ======================
+# =========================
+# 🧠 WORKER
+# =========================
 async def worker():
     global WORKING, CANCEL
 
     while True:
         try:
-
-            if not WORKING and QUEUE:
+            if QUEUE and not WORKING:
                 WORKING = True
                 CANCEL = False
 
                 file_id, file = list(QUEUE.items())[0]
                 user = OWNER[0]
 
+                settings = USER_SETTINGS.get(user, DEFAULT)
+
                 os.makedirs("downloads", exist_ok=True)
                 os.makedirs("encode", exist_ok=True)
 
-                msg = await bot.send_message(
-                    user,
-                    "📥 Starting...",
-                    buttons=[[Button.inline("❌ Cancel", b"cancel")]]
-                )
+                msg = await bot.send_message(user, "📥 Downloading...")
 
-                # ======================
-                # 📥 DOWNLOAD
-                # ======================
-                start = time.time()
+                # ---------------- DOWNLOAD ----------------
                 dl = f"downloads/{file_id}.mp4"
 
-                await bot.download_media(
-                    file,
-                    file=dl,
-                    progress_callback=lambda d, t: asyncio.create_task(
-                        progress(d, t, msg, start, "📥 Downloading")
-                    )
-                )
+                await bot.download_media(file, file=dl)
 
                 if CANCEL:
                     await msg.edit("❌ Cancelled")
                     WORKING = False
                     continue
 
-                # ======================
-                # 🧠 SMART ANALYSIS
-                # ======================
-                size_mb = Path(dl).stat().st_size / (1024 * 1024)
-                codec, crf, audio, preset = smart_encoder(size_mb)
+                # ---------------- SETTINGS ----------------
+                res = settings["resolution"]
+                crf = settings["crf"]
 
                 out = f"encode/{file_id}.mkv"
 
-                # ======================
-                # 🗜 COMPRESS
-                # ======================
                 await msg.edit("🗜 Compressing...")
 
+                # ---------------- FFmpeg ----------------
                 cmd = f'''
 ffmpeg -y -i "{dl}" 
--vf "scale=-2:720" 
--c:v {codec} -preset {preset} -crf {crf} 
--c:a aac -b:a {audio} 
--movflags +faststart 
+-vf "scale=-2:{res}" 
+-c:v libx264 -crf {crf} -pix_fmt yuv420p 
+-c:a aac -b:a 64k 
 "{out}"
 '''
 
-                process = await asyncio.create_subprocess_shell(
-                    cmd,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE
-                )
-
+                process = await asyncio.create_subprocess_shell(cmd)
                 await process.communicate()
 
                 if CANCEL:
-                    await msg.edit("❌ Cancelled")
                     WORKING = False
                     continue
 
@@ -205,53 +237,36 @@ ffmpeg -y -i "{dl}"
                     WORKING = False
                     continue
 
-                # ======================
-                # 📊 STATS
-                # ======================
+                # ---------------- STATS ----------------
                 org = Path(dl).stat().st_size
                 com = Path(out).stat().st_size
-                saved = 100 - ((com / org) * 100)
 
                 await msg.edit(
                     f"📊 Done\n\n"
                     f"Original: {round(org/1024/1024,2)} MB\n"
-                    f"Compressed: {round(com/1024/1024,2)} MB\n"
-                    f"Saved: {round(saved,2)}%"
+                    f"Compressed: {round(com/1024/1024,2)} MB"
                 )
 
-                if CANCEL:
-                    WORKING = False
-                    continue
+                # ---------------- UPLOAD ----------------
+                await bot.send_file(user, out, caption="🎬 Edited Video")
 
-                # ======================
-                # 📤 UPLOAD
-                # ======================
-                await bot.send_file(user, out, caption="✅ Compressed Successfully")
-
-                # ======================
-                # 🧹 CLEANUP
-                # ======================
+                # ---------------- CLEAN ----------------
                 QUEUE.pop(file_id)
                 WORKING = False
 
-                if os.path.exists(dl):
-                    os.remove(dl)
-                if os.path.exists(out):
-                    os.remove(out)
+                os.remove(dl)
+                os.remove(out)
 
             else:
                 await asyncio.sleep(3)
-
-        except FloodWaitError as e:
-            await asyncio.sleep(e.seconds)
 
         except Exception as e:
             LOGS.error(e)
             WORKING = False
 
-# ======================
-# 🚀 RUN BOT
-# ======================
+# =========================
+# 🚀 RUN
+# =========================
 with bot:
     bot.loop.run_until_complete(worker())
     bot.loop.run_forever()
