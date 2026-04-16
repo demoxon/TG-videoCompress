@@ -1,8 +1,30 @@
 from .config import *
 
-import os, asyncio, time, signal
+import os, asyncio, time, signal, threading
 from pathlib import Path
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from telethon import events, Button, TelegramClient
+
+# =========================
+# 🌐 PORT BIND (RENDER FIX)
+# =========================
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot Running")
+
+    def do_HEAD(self):
+        self.send_response(200)
+        self.end_headers()
+
+def run_server():
+    port = int(os.environ.get("PORT", 10000))  # 🔥 IMPORTANT
+    server = HTTPServer(("0.0.0.0", port), Handler)
+    print(f"🌐 Server running on port {port}")
+    server.serve_forever()
+
+threading.Thread(target=run_server, daemon=True).start()
 
 # =========================
 # 🔥 GLOBAL STATE
@@ -28,7 +50,7 @@ DEFAULT = {
 }
 
 # =========================
-# 🧠 SAFE EDIT
+# 🧠 SAFE EDIT (ANTI FLOOD)
 # =========================
 async def safe_edit(msg, text, delay=2):
     now = time.time()
@@ -91,9 +113,8 @@ async def help_cmd(e):
     await e.reply(
         "📘 Help Menu\n\n"
         "🎬 Send video to compress\n"
-        "⚙ Change settings from menu\n"
+        "⚙ Change settings\n"
         "❌ Cancel anytime\n\n"
-        "Commands:\n"
         "/start /help /cancel"
     )
 
@@ -212,7 +233,7 @@ async def worker():
                     asyncio.create_task(
                         safe_edit(msg,
                             f"📥 Downloading\n\n"
-                            f"📦 {mb_cur:.2f} / {mb_tot:.2f} MB\n"
+                            f"📦 {mb_cur:.2f}/{mb_tot:.2f} MB\n"
                             f"⚡ {speed/1024:.1f} KB/s"
                         )
                     )
