@@ -1,8 +1,8 @@
 from .config import *
 
-import os, asyncio, time
+import os, asyncio
 from pathlib import Path
-from telethon import TelegramClient, events, Button
+from telethon import events, Button, TelegramClient
 
 # =========================
 # 🔥 GLOBAL STATE
@@ -28,7 +28,11 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"UI Bot Running")
+        self.wfile.write(b"OK")
+
+    def do_HEAD(self):
+        self.send_response(200)
+        self.end_headers()
 
 def run_server():
     port = int(os.environ.get("PORT", 8000))
@@ -42,18 +46,17 @@ threading.Thread(target=run_server, daemon=True).start()
 DEFAULT = {
     "preset": "balanced",
     "resolution": 360,
-    "crf": 30,
-    "codec": "libx264"
+    "crf": 30
 }
 
 # =========================
-# 🎛 UI MENU
+# 🎛 UI MENUS
 # =========================
 def main_menu():
     return [
         [Button.inline("🎬 Compress Video", b"compress")],
         [Button.inline("⚙ Settings", b"settings")],
-        [Button.inline("❌ Cancel Task", b"cancel")]
+        [Button.inline("❌ Cancel", b"cancel")]
     ]
 
 def settings_menu():
@@ -65,7 +68,7 @@ def settings_menu():
 
 def preset_menu():
     return [
-        [Button.inline("⚡ Fast (Low Size)", b"p_fast")],
+        [Button.inline("⚡ Fast", b"p_fast")],
         [Button.inline("⚖ Balanced", b"p_bal")],
         [Button.inline("🎥 Quality", b"p_qual")],
         [Button.inline("🔙 Back", b"settings")]
@@ -88,76 +91,65 @@ async def start(e):
         return await e.reply("❌ Not allowed")
 
     USER_SETTINGS[e.sender_id] = DEFAULT.copy()
-
-    await e.reply(
-        "🎬 Welcome to Video Editor Bot",
-        buttons=main_menu()
-    )
+    await e.reply("🎬 Video Editor Bot", buttons=main_menu())
 
 # =========================
-# 🎛 CALLBACK HANDLER
+# 🎛 CALLBACK
 # =========================
 @bot.on(events.CallbackQuery())
 async def callback(e):
     global USER_SETTINGS, CANCEL
 
     uid = e.sender_id
+    data = e.data.decode()
 
     if uid not in USER_SETTINGS:
         USER_SETTINGS[uid] = DEFAULT.copy()
 
-    data = e.data.decode()
+    # UI NAVIGATION
+    if data == "settings":
+        return await e.edit("⚙ Settings", buttons=settings_menu())
 
-    # ---------------- UI ----------------
-    if data == "compress":
-        await e.edit("📥 Send your video now")
+    if data == "back":
+        return await e.edit("🎬 Menu", buttons=main_menu())
 
-    elif data == "settings":
-        await e.edit("⚙ Settings Panel", buttons=settings_menu())
+    if data == "preset":
+        return await e.edit("🎛 Presets", buttons=preset_menu())
 
-    elif data == "preset":
-        await e.edit("🎛 Choose Preset", buttons=preset_menu())
+    if data == "res":
+        return await e.edit("📐 Resolution", buttons=res_menu())
 
-    elif data == "res":
-        await e.edit("📐 Select Resolution", buttons=res_menu())
-
-    elif data == "back":
-        await e.edit("🎬 Main Menu", buttons=main_menu())
-
-    # ---------------- PRESETS ----------------
-    elif data == "p_fast":
-        USER_SETTINGS[uid]["preset"] = "fast"
+    # PRESETS
+    if data == "p_fast":
         USER_SETTINGS[uid]["crf"] = 35
-        await e.answer("Fast mode ON")
+        await e.answer("Fast ON")
 
-    elif data == "p_bal":
-        USER_SETTINGS[uid]["preset"] = "balanced"
+    if data == "p_bal":
         USER_SETTINGS[uid]["crf"] = 30
-        await e.answer("Balanced mode ON")
+        await e.answer("Balanced ON")
 
-    elif data == "p_qual":
-        USER_SETTINGS[uid]["preset"] = "quality"
+    if data == "p_qual":
         USER_SETTINGS[uid]["crf"] = 26
-        await e.answer("Quality mode ON")
+        await e.answer("Quality ON")
 
-    # ---------------- RESOLUTION ----------------
-    elif data == "r240":
+    # RESOLUTION
+    if data == "r240":
         USER_SETTINGS[uid]["resolution"] = 240
-        await e.answer("240p selected")
+        await e.answer("240p")
 
-    elif data == "r360":
+    if data == "r360":
         USER_SETTINGS[uid]["resolution"] = 360
-        await e.answer("360p selected")
+        await e.answer("360p")
 
-    elif data == "r720":
+    if data == "r720":
         USER_SETTINGS[uid]["resolution"] = 720
-        await e.answer("720p selected")
+        await e.answer("720p")
 
-    # ---------------- CANCEL ----------------
-    elif data == "cancel":
+    # CANCEL
+    if data == "cancel":
         CANCEL = True
         QUEUE.clear()
-        await e.answer("Cancelled ❌", alert=True)
+        await e.answer("Cancelled", alert=True)
 
 # =========================
 # 📥 VIDEO HANDLER
@@ -171,10 +163,9 @@ async def video_handler(e):
 
     if e.video or e.document:
         QUEUE.clear()
-        CANCEL = True
-
+        CANCEL = False
         QUEUE[e.id] = e.media
-        await e.reply("📥 Video received. Processing soon...")
+        await e.reply("📥 Added to queue")
 
 # =========================
 # 🧠 WORKER
@@ -200,11 +191,9 @@ async def worker():
 
                 # ---------------- DOWNLOAD ----------------
                 dl = f"downloads/{file_id}.mp4"
-
                 await bot.download_media(file, file=dl)
 
                 if CANCEL:
-                    await msg.edit("❌ Cancelled")
                     WORKING = False
                     continue
 
@@ -216,16 +205,23 @@ async def worker():
 
                 await msg.edit("🗜 Compressing...")
 
-                # ---------------- FFmpeg ----------------
-                cmd = f'''
-ffmpeg -y -i "{dl}" 
--vf "scale=-2:{res}" 
--c:v libx264 -crf {crf} -pix_fmt yuv420p 
--c:a aac -b:a 64k 
-"{out}"
-'''
+                # =========================
+                # 🔥 FIXED SINGLE LINE FFMPEG
+                # =========================
+                cmd = [
+                    "ffmpeg",
+                    "-y",
+                    "-i", dl,
+                    "-vf", f"scale=-2:{res}",
+                    "-c:v", "libx264",
+                    "-crf", str(crf),
+                    "-pix_fmt", "yuv420p",
+                    "-c:a", "aac",
+                    "-b:a", "64k",
+                    out
+                ]
 
-                process = await asyncio.create_subprocess_shell(cmd)
+                process = await asyncio.create_subprocess_exec(*cmd)
                 await process.communicate()
 
                 if CANCEL:
@@ -243,12 +239,12 @@ ffmpeg -y -i "{dl}"
 
                 await msg.edit(
                     f"📊 Done\n\n"
-                    f"Original: {round(org/1024/1024,2)} MB\n"
-                    f"Compressed: {round(com/1024/1024,2)} MB"
+                    f"Original: {org/1024/1024:.2f} MB\n"
+                    f"Compressed: {com/1024/1024:.2f} MB"
                 )
 
                 # ---------------- UPLOAD ----------------
-                await bot.send_file(user, out, caption="🎬 Edited Video")
+                await bot.send_file(user, out, caption="🎬 Done")
 
                 # ---------------- CLEAN ----------------
                 QUEUE.pop(file_id)
@@ -258,7 +254,7 @@ ffmpeg -y -i "{dl}"
                 os.remove(out)
 
             else:
-                await asyncio.sleep(3)
+                await asyncio.sleep(2)
 
         except Exception as e:
             LOGS.error(e)
