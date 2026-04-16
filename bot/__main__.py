@@ -1,6 +1,6 @@
 from .config import *
 
-import os, asyncio
+import os, asyncio, time
 from pathlib import Path
 from telethon import events, Button, TelegramClient
 
@@ -106,7 +106,6 @@ async def callback(e):
     if uid not in USER_SETTINGS:
         USER_SETTINGS[uid] = DEFAULT.copy()
 
-    # UI NAVIGATION
     if data == "settings":
         return await e.edit("⚙ Settings", buttons=settings_menu())
 
@@ -119,7 +118,6 @@ async def callback(e):
     if data == "res":
         return await e.edit("📐 Resolution", buttons=res_menu())
 
-    # PRESETS
     if data == "p_fast":
         USER_SETTINGS[uid]["crf"] = 35
         await e.answer("Fast ON")
@@ -132,7 +130,6 @@ async def callback(e):
         USER_SETTINGS[uid]["crf"] = 26
         await e.answer("Quality ON")
 
-    # RESOLUTION
     if data == "r240":
         USER_SETTINGS[uid]["resolution"] = 240
         await e.answer("240p")
@@ -145,7 +142,6 @@ async def callback(e):
         USER_SETTINGS[uid]["resolution"] = 720
         await e.answer("720p")
 
-    # CANCEL
     if data == "cancel":
         CANCEL = True
         QUEUE.clear()
@@ -168,6 +164,12 @@ async def video_handler(e):
         await e.reply("📥 Added to queue")
 
 # =========================
+# 🧠 PROGRESS HELPERS
+# =========================
+def bar(p):
+    return "█" * int(p//10) + "░" * (10 - int(p//10))
+
+# =========================
 # 🧠 WORKER
 # =========================
 async def worker():
@@ -181,23 +183,46 @@ async def worker():
 
                 file_id, file = list(QUEUE.items())[0]
                 user = OWNER[0]
-
                 settings = USER_SETTINGS.get(user, DEFAULT)
 
                 os.makedirs("downloads", exist_ok=True)
                 os.makedirs("encode", exist_ok=True)
 
-                msg = await bot.send_message(user, "📥 Downloading...")
+                msg = await bot.send_message(user, "📥 Starting...")
 
-                # ---------------- DOWNLOAD ----------------
+                # =========================
+                # 📥 DOWNLOAD WITH SPEED
+                # =========================
                 dl = f"downloads/{file_id}.mp4"
-                await bot.download_media(file, file=dl)
+
+                start_time = time.time()
+
+                def dl_progress(cur, total):
+                    if CANCEL:
+                        return
+
+                    speed = cur / (time.time() - start_time + 0.1)
+                    percent = cur * 100 / total if total else 0
+                    eta = (total - cur) / (speed + 0.1)
+
+                    asyncio.create_task(
+                        msg.edit(
+                            f"📥 Downloading...\n\n"
+                            f"{bar(percent)} {percent:.1f}%\n"
+                            f"⚡ {speed/1024:.2f} KB/s\n"
+                            f"⏱ ETA {int(eta)}s"
+                        )
+                    )
+
+                await bot.download_media(file, file=dl, progress_callback=dl_progress)
 
                 if CANCEL:
                     WORKING = False
                     continue
 
-                # ---------------- SETTINGS ----------------
+                # =========================
+                # ⚙ SETTINGS
+                # =========================
                 res = settings["resolution"]
                 crf = settings["crf"]
 
@@ -206,7 +231,7 @@ async def worker():
                 await msg.edit("🗜 Compressing...")
 
                 # =========================
-                # 🔥 FIXED SINGLE LINE FFMPEG
+                # 🗜 FFMPEG WITH LIVE PROGRESS
                 # =========================
                 cmd = [
                     "ffmpeg",
@@ -218,11 +243,38 @@ async def worker():
                     "-pix_fmt", "yuv420p",
                     "-c:a", "aac",
                     "-b:a", "64k",
+                    "-progress", "pipe:1",
+                    "-nostats",
                     out
                 ]
 
-                process = await asyncio.create_subprocess_exec(*cmd)
-                await process.communicate()
+                process = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.STDOUT
+                )
+
+                start_enc = time.time()
+
+                while True:
+                    line = await process.stdout.readline()
+                    if not line:
+                        break
+
+                    line = line.decode().strip()
+
+                    if "out_time_ms=" in line:
+                        try:
+                            t = int(line.split("=")[1]) / 1000000
+                            speed = t / (time.time() - start_enc + 0.1)
+
+                            await msg.edit(
+                                f"🗜 Compressing...\n\n"
+                                f"⏱ {t:.1f}s processed\n"
+                                f"⚡ {speed:.2f}x speed"
+                            )
+                        except:
+                            pass
 
                 if CANCEL:
                     WORKING = False
@@ -233,20 +285,42 @@ async def worker():
                     WORKING = False
                     continue
 
-                # ---------------- STATS ----------------
+                # =========================
+                # 📊 STATS
+                # =========================
                 org = Path(dl).stat().st_size
                 com = Path(out).stat().st_size
 
-                await msg.edit(
-                    f"📊 Done\n\n"
-                    f"Original: {org/1024/1024:.2f} MB\n"
-                    f"Compressed: {com/1024/1024:.2f} MB"
+                # =========================
+                # 📤 UPLOAD SPEED
+                # =========================
+                upload_start = time.time()
+
+                def up_progress(cur, total):
+                    speed = cur / (time.time() - upload_start + 0.1)
+                    percent = cur * 100 / total if total else 0
+                    eta = (total - cur) / (speed + 0.1)
+
+                    asyncio.create_task(
+                        msg.edit(
+                            f"📤 Uploading...\n\n"
+                            f"{bar(percent)} {percent:.1f}%\n"
+                            f"⚡ {speed/1024:.2f} KB/s\n"
+                            f"⏱ ETA {int(eta)}s"
+                        )
+                    )
+
+                await bot.send_file(
+                    user,
+                    out,
+                    caption=f"🎬 Done\n\n"
+                            f"📦 {org/1024/1024:.2f} → {com/1024/1024:.2f} MB",
+                    progress_callback=up_progress
                 )
 
-                # ---------------- UPLOAD ----------------
-                await bot.send_file(user, out, caption="🎬 Done")
-
-                # ---------------- CLEAN ----------------
+                # =========================
+                # 🧹 CLEAN
+                # =========================
                 QUEUE.pop(file_id)
                 WORKING = False
 
